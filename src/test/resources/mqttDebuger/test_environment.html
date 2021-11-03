@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>设备所在环境测试</title>
+    <script type="text/javascript" src="js/jquery.min.js"></script>
+    <script type="text/javascript" src="js/mqttws31.js"></script>
+    <script type="text/javascript" src="js/env_info.js"></script>
+    <style type="text/css">
+        body {font-family: Verdana, Arial, Helvetica, sans-serif;font-size: 50px;color: #1d1007; line-height:24px}
+        .input1 {font-family: Verdana, Arial, Helvetica, sans-serif;font-size:50px;}
+        .textarea1 {font-family: Verdana, Arial, Helvetica, sans-serif;font-size:25px;}
+    </style>
+</head>
+<script type="text/javascript">
+    Date.prototype.Format = function (fmt) {
+        var o = {
+            "M+": this.getMonth() + 1, //月份
+            "d+": this.getDate(), //日
+            "H+": this.getHours(), //小时
+            "m+": this.getMinutes(), //分
+            "s+": this.getSeconds(), //秒
+            "q+": Math.floor((this.getMonth() + 3) / 3), //季度
+            "S": this.getMilliseconds() //毫秒
+        };
+        if (/(y+)/.test(fmt)) fmt = fmt.replace(RegExp.$1, (this.getFullYear() + "").substr(4 - RegExp.$1.length));
+        for (var k in o)
+            if (new RegExp("(" + k + ")").test(fmt)) fmt = fmt.replace(RegExp.$1, (RegExp.$1.length == 1) ? (o[k]) : (("00" + o[k]).substr(("" + o[k]).length)));
+        return fmt;
+    }
+
+
+    /**
+     * 随机字符串
+     *
+     * @param length 随机字符串长度
+     */
+    function randomClientId(length){
+        var text = "test_tools_";
+        var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        for (var i = 0; i < length; i++){
+            text += possible.charAt(Math.floor(Math.random() * possible.length));
+        }
+        return text;
+    }
+    $(function() {
+
+        /***************************** 连接层面 ******************************************/
+
+        var connected = false;
+        var hasTest = false;
+        var msg = 0;
+        var clients = [
+            {
+                envConfig:UAT,
+                client:null,
+                options:setOptions(UAT),
+                onMessageArrived:function (message) {
+                    var data = message.payloadString;
+                    var json = JSON.parse(data);
+                    console.log("UAT有信息来啦!");
+                    console.log(data);
+                    if (json.method == "heart_rate_10sec"){
+                        printDebug( $(".subMachine").val() + "设备在UAT环境中");
+                        msg = 1;
+                    }
+                }
+            },
+            {
+                envConfig:PRO,
+                client:null,
+                options:setOptions(PRO),
+                onMessageArrived:function (message) {
+                    var data = message.payloadString;
+                    var json = JSON.parse(data);
+                    console.log("生产有信息来啦!");
+                    console.log(data);
+                    if (json.method == "heart_rate_10sec"){
+                        printDebug( $(".subMachine").val() + "设备在生产环境中");
+                        msg = 1;
+                    }
+                }
+            },
+            {
+                envConfig:TEST,
+                client:null,
+                options:setOptions(TEST),
+                onMessageArrived:function (message) {
+                    var data = message.payloadString;
+                    var json = JSON.parse(data);
+                    console.log("测试有信息来啦!");
+                    console.log(data);
+                    if (json.method == "heart_rate_10sec"){
+                        printDebug( $(".subMachine").val() + "设备在测试环境中");
+                        msg = 1;
+                    }
+                }
+            }
+        ];
+
+        /**初始化*/
+        function init(){
+            try{
+                for (var i = 0;i<clients.length;i++){
+                    connect(i);
+                }
+            }catch(e){
+                printDebug("环境建立连接失败: "+ e.message);
+            }
+
+        }
+
+        function setOptions(env){
+            var options = {
+                userName: env.userName,
+                password: env.password,
+                invocationContext: {
+                    host: env.hostName,
+                    port: env.port,
+                    clientId: randomClientId(16)
+                },
+                timeout: 5,
+                keepAliveInterval: 60,
+                cleanSession: true,
+                useSSL: env.ss === "wss",
+                //reconnect: true,
+                onSuccess: onSuccess,
+                onFailure: onFailure,
+                mqttVersion: 4
+            };
+            return options;
+        }
+
+        /**开始连接*/
+        function connect(index) {
+            var config = clients[index];
+            // TODO 加到集合
+            config.client = new Paho.MQTT.Client(config.options.invocationContext.host, Number(config.options.invocationContext.port), "/mqtt", config.options.invocationContext.clientId);
+            config.client.onConnectionLost = onConnectionLost;
+            config.client.onMessageArrived = config.onMessageArrived;
+
+            // console.log(config.client.onMessageArrived());
+
+            config.client.connect(config.options);
+        }
+
+
+        /**断开连接*/
+        function disconnect() {
+            // TODO 断开所有的连接
+            connected = false;
+            for (var i = 0; i<clients.length; i++){
+                clients[i].client.disconnect();
+                clients[i].client = null;
+                console.log("关闭连接");
+            }
+        }
+
+        /**失去连接*/
+        function onConnectionLost(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                printDebug("lost connection:" + responseObject.errorMessage);
+            }
+            connected = false;
+        }
+
+        /**连接时*/
+        function onSuccess(context) {
+            connected = true;
+            hasTest = true;
+            console.log("我连接环境成功啦");
+        }
+
+        /**连接失败时*/
+        function onFailure(context) {
+            console.log(context);
+            printDebug("connection failed: [ErrorMessage: " + context.errorMessage + "]");
+            connected = false;
+        }
+
+        /***************************** UI层面 ******************************************/
+
+        /**控制调试信息输出*/
+        function printDebug(str){
+            $("#debug").val($("#debug").val() + "\n" + str);
+            document.getElementById('debug').scrollTop = document.getElementById('debug').scrollHeight;//textarea滚动
+        }
+
+        /**查找环境*/
+        $("#subMachineContainers").on("click",".sub",function(){
+            reloadTime();
+            if (connected){
+                var subMachine = $(this).parent().find(".subMachine").val();
+                var subMsg = "d/p/airBedT10/" + subMachine;
+                if(subMachine === "" || subMachine.length < 1){
+                    alert("请输入设备号!");
+                }else{
+                    var ops = {qos: 0};
+                    try{
+                        for (var i = 0;i<clients.length;i++){
+                            clients[i].client.subscribe(subMsg, ops);
+                            // printDebug("订阅主题: "+subMsg);
+                        }
+                    }catch(e){
+                        alert(e.message);
+                    }
+                }
+                //TODO 设置定时器清空连接
+                setTimeout(function () {
+                    console.log(msg);
+                    if (msg == 0){
+                        alert("无法获取"+$(".subMachine").val() + "设备所在环境信息,请检查设备是否在线")
+                    }
+                    for (var i = 0;i<clients.length;i++){
+                        clients[i].client.unsubscribe(subMsg);//终止订阅指定主题
+                        msg = 0;
+                        // printDebug("取消订阅"+clients[i].envConfig+"主题: "+subMsg);
+                    }
+                },1000);
+            }else {
+                alert("长时间未操作,请重新刷新页面");
+            }
+
+        });
+
+        init();
+
+        //init连接三个环境
+        //输入设备号
+        //订阅三个环境的信息
+        //时隔2秒取消三个主题的订阅
+        //关闭页面时断开连接,否则15秒无操作后自动断开连接
+
+        /**监听网页离开时断开连接*/
+        window.onbeforeunload=function(e) {
+            disconnect();
+        }
+
+
+        var maxTime = 600; // seconds
+        var time = maxTime;
+        $('body').on('keydown mousemove mousedown', function(e){
+            time = maxTime; // reset
+        });
+        var intervalId = setInterval(function(){
+            time--;
+            if(time <= 0) {
+                ShowInvalidLoginMessage();
+                clearInterval(intervalId);
+            }
+        }, 1000)
+        function ShowInvalidLoginMessage(){
+            disconnect();
+        }
+        function reloadTime(){
+            time = maxTime; // reset**加粗样式**
+        }
+
+    });
+</script>
+<body>
+<div>
+    <h2>测试设备所在环境</h2>
+    <br><br>
+    <div id="subMachineContainers">
+        <input placeholder="在此输入设备号" style="width: 70%;height: 100px;font-size: 50px" class="subMachine" type="text">
+        <!--        <input style="width: 50%;height: 100px;" type="button" class="input1" id="search" value="开始查询">-->
+        <button style="width: 25%;height: 100px;font-size: 50px" id="search" class="sub">开始查询</button>
+    </div>
+    <br>
+    <br>
+    <div>
+        <span>MESSAGE BOX:</span>
+    </div>
+    <br>
+    <div>
+        <textarea id="debug" style="width:100%; height:1000px;font-size: 50px" readonly></textarea>
+    </div>
+</div>
+</body>
+</html>

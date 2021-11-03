@@ -1,0 +1,206 @@
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>云连接测试</title>
+    <script type="text/javascript" src="js/jquery.min.js"></script>
+    <script type="text/javascript" src="js/mqttws31.js"></script>
+    <script type="text/javascript" src="js/env_info.js"></script>
+    <style type="text/css">
+        body {font-family: Verdana, Arial, Helvetica, sans-serif;font-size: 50px;color: #1d1007; line-height:24px}
+        .input1 {font-family: Verdana, Arial, Helvetica, sans-serif;font-size:50px;}
+        .textarea1 {font-family: Verdana, Arial, Helvetica, sans-serif;font-size:25px;}
+    </style>
+</head>
+<script type="text/javascript">
+    Date.prototype.Format = function (fmt) {
+        var o = {
+            "M+": this.getMonth() + 1, //月份
+            "d+": this.getDate(), //日
+            "H+": this.getHours(), //小时
+            "m+": this.getMinutes(), //分
+            "s+": this.getSeconds(), //秒
+            "q+": Math.floor((this.getMonth() + 3) / 3), //季度
+            "S": this.getMilliseconds() //毫秒
+        };
+        if (/(y+)/.test(fmt)) fmt = fmt.replace(RegExp.$1, (this.getFullYear() + "").substr(4 - RegExp.$1.length));
+        for (var k in o)
+            if (new RegExp("(" + k + ")").test(fmt)) fmt = fmt.replace(RegExp.$1, (RegExp.$1.length == 1) ? (o[k]) : (("00" + o[k]).substr(("" + o[k]).length)));
+        return fmt;
+    }
+
+    /**
+     * 随机字符串
+     *
+     * @param length 随机字符串长度
+     */
+    function randomClientId(length){
+        var text = "test_conn_";
+        var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        for (var i = 0; i < length; i++){
+            text += possible.charAt(Math.floor(Math.random() * possible.length));
+        }
+        return text;
+    }
+    $(function() {
+
+        /***************************** 连接层面 ******************************************/
+
+        var connected = false;
+        var hasTest = false;
+        var client;
+        var options;
+
+        function setOptions(userName,password,ss,hostName,port,clientId){
+            options = {
+                userName: userName,
+                password: password,
+                invocationContext: {
+                    host: hostName,
+                    port: port,
+                    clientId: clientId
+                },
+                timeout: 5,
+                keepAliveInterval: 60,
+                cleanSession: true,
+                useSSL: ss === "wss",
+                //reconnect: true,
+                onSuccess: onSuccess,
+                onFailure: onFailure,
+                mqttVersion: 4
+            };
+        }
+
+        /**开始连接*/
+        function connect(hostName,port,path,clientId) {
+            client = new Paho.MQTT.Client(hostName, Number(port), "/"+path, clientId);
+            client.onConnectionLost = onConnectionLost;
+            client.onMessageArrived = onMessageArrived;
+            client.connect(options);
+        }
+
+        /**断开连接*/
+        function disconnect() {
+            client.disconnect();
+            printDebug("connection disconnect!");
+            if(hasTest){
+                printDebug("connect test end");
+                hasTest = false;
+            }
+        }
+
+        /**失去连接*/
+        function onConnectionLost(responseObject) {
+            if (responseObject.errorCode !== 0) {
+                printDebug("lost connection:" + responseObject.errorMessage);
+            }
+            connected = false;
+        }
+
+        /**消息到达*/
+        function onMessageArrived(message) {
+            printDebug("message arrived:[destinationName:" + message.destinationName + ",payloadString:"+message.payloadString + "]");
+            disconnect();
+        }
+
+        /**连接时*/
+        function onSuccess(context) {
+            printDebug("connect success: [ID: " + context.invocationContext.clientId + "]");
+            connected = true;
+            hasTest = true;
+
+            var ops = {qos: 0};
+            try{
+                client.subscribe("test_conn", ops);
+                printDebug("subscribe: "+"test_conn");
+                var message = new Paho.MQTT.Message("receive message test ok");
+                message.destinationName = "test_conn";
+                message.qos = 1;
+                message.retained = false;
+                client.send(message);
+                printDebug("send test message to topic: test_conn");
+            }catch(e){
+                alert(e.message);
+            }finally {
+                setTimeout(disconnect,1*60*1000);
+            }
+        }
+
+        /**连接失败时*/
+        function onFailure(context) {
+            printDebug("connection failed: [ErrorMessage: " + context.errorMessage + "]");
+            connected = false;
+        }
+
+
+        /**连接环境*/
+        function connect_env(){
+            var env = "";
+            if ($("#env").val() == "UAT环境"){
+                env = UAT;
+            }else if ($("#env").val() == "生产环境"){
+                env = PRO;
+            }else if ($("#env").val() == "测试环境"){
+                env = TEST;
+            }
+            try{
+                setOptions(env.userName,env.password,env.ss,env.hostName,env.port,randomClientId(16));
+                connect(env.hostName,env.port,"mqtt",randomClientId(16))
+            }catch(e){
+                printDebug("建立连接失败: "+ e.message);
+            }
+        }
+
+        /***************************** UI层面 ******************************************/
+
+        /**控制调试信息输出*/
+        function printDebug(str){
+            $("#debug").val($("#debug").val() + "\n" + str);
+            document.getElementById('debug').scrollTop = document.getElementById('debug').scrollHeight;//textarea滚动
+        }
+        /**连接*/
+        $("#connect").click(function(){
+            $("#debug").val("");
+            connect_env();
+            // try{
+            //     setOptions("","","ws","test.derucci-smart.com","8083",randomClientId(16));
+            //     connect("test.derucci-smart.com","8083","mqtt",randomClientId(16))
+            // }catch(e){
+            //     printDebug("connect failed: "+ e.message);
+            // }
+        });
+
+        //控制显示连接状态
+        self.setInterval(function(){
+            if(connected || hasTest){
+                $("#connect").attr("disabled","disabled");
+            }else{
+                $("#connect").removeAttr("disabled");
+            }
+        },100);
+    });
+</script>
+<body>
+<div>
+    <div>
+        <div>
+            <p>
+                <select style="width: 50%;height: 100px;" class="input1" id="env">
+                    <option id="UAT">UAT环境</option>
+                    <option id="PRO">生产环境</option>
+                    <option id="TES">测试环境</option>
+                </select>
+            </p>
+            <input id="connect" type="button" value="ClICK TEST" style="width: 100%;height: 200px;" class="input1" disabled>
+        </div>
+        <br>
+        <div>
+            <span>MESSAGE BOX:</span>
+        </div>
+        <br>
+        <div>
+            <textarea id="debug" style="width:100%; height:700px" class="textarea1" readonly></textarea>
+        </div>
+    </div>
+</div>
+</body>
+</html>
